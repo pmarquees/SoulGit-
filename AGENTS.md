@@ -405,7 +405,8 @@ Decision identifiers are stable; gaps in the numbering are intentional.
   an authoritative peer, registry database, or coordinator. Any S3/GCS-backed Walgit node can reconstruct the
   complete accepted state; peers may accelerate delivery but never decide truth.
 - **D43** **A proposal is a ref family.** `refs/soulgit/proposals/<id>/head` is the proposed commit; sibling
-  `target`, `author`, `state`, `reviews/<actor>/<decision>`, and `checks/<name>/<result>` refs project the inbox.
+  `target`, `author`, `state`, `reviews/<actor>/<decision>`, `checks/<actor>/<name>/<result>`, and `result` refs
+  project the inbox.
   All proposal writes use ordinary atomic receive-pack updates and the existing manifest CAS.
 - **D44** **Attestations bind to the exact head OID.** A review/check is active only when its ref points to the
   current proposal head. Updating a proposal makes old attestations stale without mutation or hidden state.
@@ -425,6 +426,18 @@ Decision identifiers are stable; gaps in the numbering are intentional.
   `walgit.toml`. This is a narrow exception to D39's server/operator config rule.
 - **D50** **SoulGit is a deliberate product fork of Walgit.** Upstream history and invariants are retained;
   fork-specific protocol and UI changes are documented in `docs/SOULGIT.md` and `UPSTREAM.md`.
+- **D51** **Readiness is canonical, versioned configuration.** `.soulgit.toml` is read from the proposal's current
+  target commit and defines approval counts, named checks, merge strategy, and independent agent grants. Commit
+  subject/body supply proposal title/description; no proposal database or mutable metadata object is introduced.
+- **D52** **A merge is one leased transaction.** The canonical target, merged state, result commit, and a no-op
+  lease on the exact reviewed proposal head are published atomically. A concurrent target or proposal update
+  rejects the entire operation.
+- **D53** **Automatic receipt never mutates a checkout.** `proposal subscribe` installs a proposal-only fetch
+  refspec and `proposal watch` reports changes. Objects and remote-tracking proposal refs may arrive automatically;
+  local branches and working trees move only by an explicit user or agent action.
+- **D54** **Agent powers are independent and deny-by-omission.** A configured principal receives only its listed
+  check names and explicit review/merge booleans. The server derives identity from authentication, never from a
+  request body, and still subjects every resulting ref transaction to `policy.json`.
 
 ---
 

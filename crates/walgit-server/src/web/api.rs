@@ -1,4 +1,4 @@
-//! Read-only JSON API for the web UI (`web/API.md`, v2 contract).
+//! JSON API for the web UI and agents (`web/API.md`, v2 contract).
 //!
 //! Two URL classes: ref-dependent (`refs`, `refs/{branches,tags}`,
 //! `resolve`, name-addressed tree/blob/commits/commit) answered from a
@@ -21,13 +21,15 @@ use std::sync::Arc;
 
 use axum::{
     Router,
+    Json,
     extract::{Path, Query, State},
     http::{HeaderMap, header},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use futures::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use walgit_proto::v1::{RefTransaction, RefUpdate};
 use walgit_store::{GetOptions, ObjectStore, Prefixed, PutBody, PutMode};
 use walgit_wal::{ObjectAccess, RepoHandle, Reporter};
 
@@ -38,6 +40,7 @@ use crate::{AppState, auth::AuthError, cache::RefIndex, error::ApiError};
 const MAX_BLOB: usize = 2 * 1024 * 1024;
 const IMMUTABLE: &str = "private, max-age=31536000, immutable";
 const SWR: &str = "private, max-age=0, stale-while-revalidate=60";
+const NO_STORE: &str = "no-store";
 const DEFAULT_PAGE: usize = 100;
 const MAX_PAGE: usize = 1000;
 /// Store key prefix (inside the repo prefix) of the shared render cache.
@@ -201,6 +204,26 @@ struct ProposalPage {
     more: bool,
 }
 
+#[derive(Serialize)]
+struct ProposalDetailResponse {
+    proposal: soulgit_proposals::Proposal,
+    readiness: soulgit_proposals::Readiness,
+    merge: soulgit_proposals::MergeRules,
+    title: String,
+    description: String,
+}
+
+#[derive(Deserialize)]
+struct ProposalReviewBody {
+    decision: String,
+}
+
+#[derive(Deserialize)]
+struct ProposalCheckBody {
+    name: String,
+    result: String,
+}
+
 pub fn router(state: Arc<AppState>) -> Router {
     // D26/D27: repo-scoped endpoints live under the repository's own prefix,
     // `/{owner}/{repo}/api/…` (bearer/session lane) and `/{owner}/{repo}/api-browser/…`
@@ -217,6 +240,18 @@ pub fn router(state: Arc<AppState>) -> Router {
             .route(&format!("{base}/refs/{{kind}}"), get(ref_list))
             .route(&format!("{base}/proposals"), get(proposals))
             .route(&format!("{base}/proposals/{{id}}"), get(proposal))
+            .route(
+                &format!("{base}/proposals/{{id}}/reviews"),
+                post(proposal_review),
+            )
+            .route(
+                &format!("{base}/proposals/{{id}}/checks"),
+                post(proposal_check),
+            )
+            .route(
+                &format!("{base}/proposals/{{id}}/merge"),
+                post(proposal_merge),
+            )
             .route(&format!("{base}/resolve"), get(resolve_root))
             .route(&format!("{base}/resolve/"), get(resolve_root))
             .route(&format!("{base}/resolve/{{*rest}}"), get(resolve))
@@ -685,17 +720,376 @@ async fn proposal(
         &headers,
         &owner,
         &repo_name,
-        Need::Refs,
+        Need::Objects,
         None,
         |r| async move {
             let proposal = r
                 .index
                 .proposal(&id)
+                .cloned()
                 .ok_or_else(|| not_found(format!("proposal {id}")))?;
-            Ok(json_swr(proposal, Some(&etag_for(&r.version))))
+            let config = soulgit_config(&r, &proposal).await?;
+            let (title, description) = proposal_message(&r, &proposal.head).await?;
+            let detail = ProposalDetailResponse {
+                readiness: proposal.readiness(&config),
+                merge: config.merge,
+                proposal,
+                title,
+                description,
+            };
+            Ok(json_swr(&detail, Some(&etag_for(&r.version))))
         },
     )
     .await
+}
+
+async fn proposal_review(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, repo_name, id)): Path<(String, String, String)>,
+    Json(body): Json<ProposalReviewBody>,
+) -> Result<Response, ApiError> {
+    soulgit_proposals::validate_id(&id).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let principal = st.auth.require_write(&headers).await.map_err(auth_err)?;
+    let decision: soulgit_proposals::ReviewDecision = body
+        .decision
+        .parse()
+        .map_err(|e: soulgit_proposals::ParseError| ApiError::BadRequest(e.to_string()))?;
+    let who = principal.name;
+    let st2 = st.clone();
+    run(
+        &st,
+        &headers,
+        &owner,
+        &repo_name,
+        Need::Objects,
+        None,
+        move |r| async move {
+            let proposal = proposal_from(&r, &id)?;
+            let config = soulgit_config(&r, &proposal).await?;
+            if config.agent(&who).is_some_and(|agent| !agent.review) {
+                return Err(ApiError::Forbidden);
+            }
+            let desired = soulgit_proposals::review_ref(&id, &who, decision)
+                .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            let marker = format!("{}/reviews/{who}/", proposal_prefix(&id));
+            let txn = replace_ref_family(&r, &marker, &desired, &proposal.head);
+            let seq = publish_proposal_txn(&st2, &r, &who, txn).await?;
+            Ok(Rendered::json(
+                json_bytes(&serde_json::json!({"ok": true, "seq": seq})),
+                NO_STORE,
+                None,
+            ))
+        },
+    )
+    .await
+}
+
+async fn proposal_check(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, repo_name, id)): Path<(String, String, String)>,
+    Json(body): Json<ProposalCheckBody>,
+) -> Result<Response, ApiError> {
+    soulgit_proposals::validate_id(&id).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    soulgit_proposals::validate_actor(&body.name)
+        .map_err(|_| ApiError::BadRequest("invalid check name".into()))?;
+    let result: soulgit_proposals::CheckResult = body
+        .result
+        .parse()
+        .map_err(|e: soulgit_proposals::ParseError| ApiError::BadRequest(e.to_string()))?;
+    let principal = st.auth.require_write(&headers).await.map_err(auth_err)?;
+    let who = principal.name;
+    let check_name = body.name;
+    let st2 = st.clone();
+    run(
+        &st,
+        &headers,
+        &owner,
+        &repo_name,
+        Need::Objects,
+        None,
+        move |r| async move {
+            let proposal = proposal_from(&r, &id)?;
+            let config = soulgit_config(&r, &proposal).await?;
+            let agent = config.agent(&who).ok_or(ApiError::Forbidden)?;
+            if !agent.checks.iter().any(|allowed| allowed == &check_name) {
+                return Err(ApiError::Forbidden);
+            }
+            let desired = soulgit_proposals::check_ref(&id, &who, &check_name, result)
+                .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            let marker = format!("{}/checks/{who}/{check_name}/", proposal_prefix(&id));
+            let txn = replace_ref_family(&r, &marker, &desired, &proposal.head);
+            let seq = publish_proposal_txn(&st2, &r, &who, txn).await?;
+            Ok(Rendered::json(
+                json_bytes(&serde_json::json!({"ok": true, "seq": seq})),
+                NO_STORE,
+                None,
+            ))
+        },
+    )
+    .await
+}
+
+async fn proposal_merge(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, repo_name, id)): Path<(String, String, String)>,
+) -> Result<Response, ApiError> {
+    soulgit_proposals::validate_id(&id).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let principal = st.auth.require_write(&headers).await.map_err(auth_err)?;
+    let who = principal.name;
+    let st2 = st.clone();
+    run(
+        &st,
+        &headers,
+        &owner,
+        &repo_name,
+        Need::Objects,
+        None,
+        move |r| async move {
+            let proposal = proposal_from(&r, &id)?;
+            let config = soulgit_config(&r, &proposal).await?;
+            if config.agent(&who).is_some_and(|agent| !agent.merge) {
+                return Err(ApiError::Forbidden);
+            }
+            let readiness = proposal.readiness(&config);
+            if !readiness.ready {
+                return Err(ApiError::Conflict(readiness.blockers.join("; ")));
+            }
+            if config.merge.strategy != soulgit_proposals::MergeStrategy::FastForward {
+                return Err(ApiError::BadRequest(
+                    "web merge currently supports fast-forward; run `walgit proposal merge` for merge-commit or squash"
+                        .into(),
+                ));
+            }
+            let target_name = format!("refs/heads/{}", proposal.target);
+            let target_oid = r
+                .index
+                .by_name
+                .get(&target_name)
+                .map(|(oid, _)| oid.clone())
+                .ok_or_else(|| not_found(format!("target branch {}", proposal.target)))?;
+            if !r
+                .local
+                .is_ancestor(&target_oid, &proposal.head)
+                .await
+                .map_err(internal)?
+            {
+                return Err(ApiError::Conflict(
+                    "proposal is not a fast-forward of the current target".into(),
+                ));
+            }
+            let merged = soulgit_proposals::state_ref(
+                &id,
+                soulgit_proposals::ProposalState::Merged,
+            )
+            .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            let result = soulgit_proposals::result_ref(&id)
+                .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            let mut updates = replace_ref_family(
+                &r,
+                &format!("{}/state/", proposal_prefix(&id)),
+                &merged,
+                &proposal.head,
+            )
+            .updates;
+            updates.push(RefUpdate {
+                name: target_name,
+                old_oid: target_oid,
+                new_oid: proposal.head.clone(),
+                ..Default::default()
+            });
+            let old_result = r
+                .index
+                .by_name
+                .get(&result)
+                .map(|(oid, _)| oid.clone())
+                .unwrap_or_default();
+            updates.push(RefUpdate {
+                name: result,
+                old_oid: old_result,
+                new_oid: proposal.head.clone(),
+                ..Default::default()
+            });
+            // Re-assert the exact revision being merged. This is a no-op ref
+            // update, but its old-value lease makes a concurrent proposal
+            // update fail the whole atomic transaction.
+            let proposal_head = soulgit_proposals::head_ref(&id)
+                .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            updates.push(RefUpdate {
+                name: proposal_head,
+                old_oid: proposal.head.clone(),
+                new_oid: proposal.head.clone(),
+                ..Default::default()
+            });
+            let txn = RefTransaction {
+                updates,
+                atomic: true,
+                ..Default::default()
+            };
+            let seq = publish_proposal_txn(&st2, &r, &who, txn).await?;
+            Ok(Rendered::json(
+                json_bytes(&serde_json::json!({
+                    "ok": true,
+                    "seq": seq,
+                    "merge_oid": proposal.head,
+                    "target": proposal.target,
+                })),
+                NO_STORE,
+                None,
+            ))
+        },
+    )
+    .await
+}
+
+fn proposal_prefix(id: &str) -> String {
+    format!("{}{id}", soulgit_proposals::PROPOSAL_PREFIX)
+}
+
+fn proposal_from(r: &Repo, id: &str) -> Result<soulgit_proposals::Proposal, ApiError> {
+    r.index
+        .proposal(id)
+        .cloned()
+        .ok_or_else(|| not_found(format!("proposal {id}")))
+}
+
+fn replace_ref_family(r: &Repo, marker: &str, desired: &str, oid: &str) -> RefTransaction {
+    let mut updates: Vec<RefUpdate> = r
+        .index
+        .by_name
+        .iter()
+        .filter(|(name, _)| name.starts_with(marker) && name.as_str() != desired)
+        .map(|(name, (old, _))| RefUpdate {
+            name: name.clone(),
+            old_oid: old.clone(),
+            new_oid: String::new(),
+            ..Default::default()
+        })
+        .collect();
+    updates.push(RefUpdate {
+        name: desired.to_string(),
+        old_oid: r
+            .index
+            .by_name
+            .get(desired)
+            .map(|(old, _)| old.clone())
+            .unwrap_or_default(),
+        new_oid: oid.to_string(),
+        ..Default::default()
+    });
+    RefTransaction {
+        updates,
+        atomic: true,
+        ..Default::default()
+    }
+}
+
+async fn publish_proposal_txn(
+    st: &AppState,
+    r: &Repo,
+    principal: &str,
+    txn: RefTransaction,
+) -> Result<u64, ApiError> {
+    let policy = crate::policy::load(&st.store, r.handle.id())
+        .await
+        .map_err(internal)?;
+    let mut forces = std::collections::HashSet::new();
+    for update in &txn.updates {
+        if crate::policy::classify(&update.old_oid, &update.new_oid)
+            == crate::policy::RefOp::Update
+            && !r
+                .local
+                .is_ancestor(&update.old_oid, &update.new_oid)
+                .await
+                .unwrap_or(false)
+        {
+            forces.insert(update.name.clone());
+        }
+    }
+    let evaluated = crate::policy::evaluate(&policy, principal, &txn, |update| {
+        forces.contains(&update.name)
+    });
+    if evaluated.any_denied() {
+        let reason = evaluated
+            .per_ref
+            .into_iter()
+            .filter_map(|(name, result)| result.err().map(|error| format!("{name}: {error}")))
+            .collect::<Vec<_>>()
+            .join("; ");
+        tracing::info!(%reason, "proposal update denied");
+        return Err(ApiError::Forbidden);
+    }
+    let mut meta = std::collections::HashMap::new();
+    meta.insert("principal".into(), principal.to_string());
+    meta.insert("soulgit".into(), "proposal".into());
+    let published = r
+        .handle
+        .publish_ref_update(evaluated.publish, meta)
+        .await
+        .map_err(crate::smart::wal_err)?;
+    if let Some((name, error)) = published
+        .per_ref
+        .into_iter()
+        .find_map(|(name, result)| result.err().map(|error| (name, error)))
+    {
+        return Err(ApiError::Conflict(format!("{name}: {error}")));
+    }
+    Ok(published.seq)
+}
+
+async fn soulgit_config(
+    r: &Repo,
+    proposal: &soulgit_proposals::Proposal,
+) -> Result<soulgit_proposals::SoulGitConfig, ApiError> {
+    let target = r
+        .index
+        .branch(&proposal.target)
+        .ok_or_else(|| not_found(format!("target branch {}", proposal.target)))?;
+    let text = if let Some(remote) = r.remote() {
+        let oid = gix_hash::ObjectId::from_hex(target.as_bytes())
+            .map_err(|_| not_found("target commit"))?;
+        match remote.fault_path(&oid, ".soulgit.toml").await {
+            Ok((_, blob, _)) => String::from_utf8(remote.get(&blob).await?.data.to_vec())
+                .map_err(|_| ApiError::BadRequest(".soulgit.toml is not UTF-8".into()))?,
+            Err(ApiError::NotFound(_)) => return Ok(Default::default()),
+            Err(error) => return Err(error),
+        }
+    } else {
+        let spec = format!("{target}:.soulgit.toml");
+        let output = r
+            .local
+            .git(&["show", &spec])
+            .await
+            .map_err(internal)?;
+        if !output.status.success() {
+            return Ok(Default::default());
+        }
+        String::from_utf8(output.stdout)
+            .map_err(|_| ApiError::BadRequest(".soulgit.toml is not UTF-8".into()))?
+    };
+    soulgit_proposals::SoulGitConfig::parse(&text).map_err(ApiError::BadRequest)
+}
+
+async fn proposal_message(r: &Repo, head: &str) -> Result<(String, String), ApiError> {
+    if let Some(remote) = r.remote() {
+        let oid = gix_hash::ObjectId::from_hex(head.as_bytes())
+            .map_err(|_| not_found("proposal commit"))?;
+        let commit = remote.commit(&oid).await?;
+        return Ok((commit.subject, commit.body));
+    }
+    let output = r
+        .local
+        .git(&["show", "-s", "--format=%s%n%b", head])
+        .await
+        .map_err(internal)?;
+    if !output.status.success() {
+        return Err(not_found("proposal commit"));
+    }
+    let text = String::from_utf8(output.stdout).map_err(internal)?;
+    let (title, description) = text.split_once('\n').unwrap_or((&text, ""));
+    Ok((title.trim().to_string(), description.trim().to_string()))
 }
 
 // ---- resolve -----------------------------------------------------------------

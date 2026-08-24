@@ -341,16 +341,49 @@ SoulGit's name-sorted proposal inbox, projected from `refs/soulgit/proposals/*` 
     "id": "01J6Q9X4K7Y7D4GX8QPMMX9QX0",
     "head": "807d45a6…", "target": "main", "author": "alice@example.com", "state": "reviewing",
     "reviews": [{"reviewer": "bob@example.com", "decision": "approved"}],
-    "checks": [{"runner": "tests", "result": "passed"}], "healthy": true, "issues": []
+    "checks": [{"actor": "svc-ci", "name": "tests", "result": "passed"}],
+    "merge_oid": null, "healthy": true, "issues": []
   }],
   "more": false
 }
 ```
 
 `state` is an exact proposal-state filter; `q` is a case-insensitive id/author/target substring; `after` is an
-id cursor; `n` defaults to 100 and is capped at 1000. `GET …/proposals/{id}` returns one projection or `404`.
-Only metadata/review/check refs pointing at the proposal's current head are included. Cache: SWR + manifest-version
-ETag. SDK: `repo.proposals(query)` and `repo.proposal(id)`.
+id cursor; `n` defaults to 100 and is capped at 1000. Only metadata/review/check refs pointing at the proposal's
+current head are included. Cache: SWR + manifest-version ETag. SDK: `repo.proposals(query)`.
+
+### `GET /{owner}/{repo}/api/proposals/{id}`
+
+Returns one proposal with the head commit message and readiness computed from `.soulgit.toml` on the current
+target branch:
+
+```json
+{
+  "proposal": {"id":"p-123", "head":"807d45a6…", "target":"main", "author":"alice@example.com", "state":"reviewing", "reviews":[], "checks":[], "merge_oid":null, "healthy":true, "issues":[]},
+  "readiness": {"ready":false, "approvals":0, "approvals_required":1, "missing_checks":[], "failed_checks":[], "blockers":["needs 1 more approval"]},
+  "merge": {"min_approvals":1, "required_checks":[], "allow_author_approval":false, "strategy":"fast-forward"},
+  "title": "Add sharing inbox",
+  "description": "Proposal details from the commit body."
+}
+```
+
+Cache: SWR + manifest-version ETag. SDK: `repo.proposal(id)`.
+
+### Proposal actions
+
+Authenticated writes use the caller's server-derived principal and publish ordinary atomic ref transactions:
+
+```text
+POST /{owner}/{repo}/api/proposals/{id}/reviews  {"decision":"approved|changes-requested"}
+POST /{owner}/{repo}/api/proposals/{id}/checks   {"name":"tests","result":"pending|passed|failed|skipped"}
+POST /{owner}/{repo}/api/proposals/{id}/merge
+```
+
+Review and check refs bind to the current head. Checks require a matching agent/check grant in `.soulgit.toml`.
+Merge requires readiness, agent merge permission when the caller is configured as an agent, and `policy.json`
+authorization. The web endpoint supports fast-forward strategy; CLI merge handles merge-commit and squash.
+Successful writes return `{ "ok": true, "seq": 42 }`; merge also returns `merge_oid` and `target`. These responses
+are `no-store`. SDK: `reviewProposal`, `checkProposal`, and `mergeProposal`.
 
 ### `GET /{owner}/{repo}/api/resolve/{rest...}`
 

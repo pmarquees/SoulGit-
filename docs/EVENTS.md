@@ -54,7 +54,9 @@ Only `ref` events exist. Not events: push denials and auth failures (metrics + l
   entries emit nothing.
 - SoulGit proposal refs are ordinary refs and therefore need no new event kind. Agent consumers filter
   `ref_name` on `refs/soulgit/proposals/`, deduplicate normally, and bind work to the event's `new` OID. The
-  webhook is notification only: consumers fetch the immutable commit before publishing a check or review ref.
+  local `walgit proposal subscribe|watch` commands provide a polling subscriber when a webhook consumer is not
+  appropriate; they update only remote-tracking proposal refs and never a working tree. The webhook is
+  notification only: consumers fetch the immutable commit before publishing a check or review ref.
 
 **Dedup key (normative): `(repo, _walgit.seq, ref_name)`.** **Order: by `seq` per repo.** Nothing else is promised.
 

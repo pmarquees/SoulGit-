@@ -56,7 +56,7 @@ function ProposalRow({ repo, proposal }: { repo: string; proposal: Proposal }) {
     <article className="proposal-row">
       <div className="proposal-main">
         <div className="row gap wrap">
-          <Link to={`/${repo}/commit/${proposal.head}`} className="strong proposal-id">{proposal.id}</Link>
+          <Link to={`/${repo}/proposals/${proposal.id}`} className="strong proposal-id">{proposal.id}</Link>
           <span className={`proposal-state state-${proposal.state}`}>{proposal.state.replace("-", " ")}</span>
         </div>
         <div className="muted small proposal-meta">

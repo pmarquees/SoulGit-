@@ -154,8 +154,110 @@ pub struct Review {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Check {
-    pub runner: String,
+    pub actor: String,
+    pub name: String,
     pub result: CheckResult,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MergeStrategy {
+    #[default]
+    FastForward,
+    MergeCommit,
+    Squash,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MergeRules {
+    pub min_approvals: usize,
+    pub required_checks: Vec<String>,
+    pub allow_author_approval: bool,
+    pub strategy: MergeStrategy,
+}
+
+impl Default for MergeRules {
+    fn default() -> Self {
+        Self {
+            min_approvals: 1,
+            required_checks: Vec::new(),
+            allow_author_approval: false,
+            strategy: MergeStrategy::FastForward,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentGrant {
+    pub principal: String,
+    pub checks: Vec<String>,
+    pub review: bool,
+    pub merge: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SoulGitConfig {
+    pub version: u32,
+    pub merge: MergeRules,
+    pub agents: Vec<AgentGrant>,
+}
+
+impl Default for SoulGitConfig {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            merge: MergeRules::default(),
+            agents: Vec::new(),
+        }
+    }
+}
+
+impl SoulGitConfig {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let config: Self = toml::from_str(text).map_err(|e| e.to_string())?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.version != 1 {
+            return Err(format!("unsupported SoulGit config version {}", self.version));
+        }
+        if self.merge.min_approvals > 100 {
+            return Err("merge.min_approvals must be at most 100".into());
+        }
+        let mut principals = std::collections::HashSet::new();
+        for agent in &self.agents {
+            validate_actor(&agent.principal).map_err(|e| e.to_string())?;
+            if !principals.insert(agent.principal.as_str()) {
+                return Err(format!("duplicate agent principal `{}`", agent.principal));
+            }
+            for check in &agent.checks {
+                validate_actor(check).map_err(|_| format!("invalid check name `{check}`"))?;
+            }
+        }
+        for check in &self.merge.required_checks {
+            validate_actor(check).map_err(|_| format!("invalid required check `{check}`"))?;
+        }
+        Ok(())
+    }
+
+    pub fn agent(&self, principal: &str) -> Option<&AgentGrant> {
+        self.agents.iter().find(|agent| agent.principal == principal)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Readiness {
+    pub ready: bool,
+    pub approvals: usize,
+    pub approvals_required: usize,
+    pub missing_checks: Vec<String>,
+    pub failed_checks: Vec<String>,
+    pub blockers: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,6 +269,7 @@ pub struct Proposal {
     pub state: ProposalState,
     pub reviews: Vec<Review>,
     pub checks: Vec<Check>,
+    pub merge_oid: Option<String>,
     pub healthy: bool,
     pub issues: Vec<String>,
 }
@@ -184,6 +287,85 @@ impl Proposal {
             .iter()
             .filter(|check| check.result == CheckResult::Passed)
             .count()
+    }
+
+    pub fn readiness(&self, config: &SoulGitConfig) -> Readiness {
+        let approvals = self
+            .reviews
+            .iter()
+            .filter(|review| {
+                review.decision == ReviewDecision::Approved
+                    && (config.merge.allow_author_approval || review.reviewer != self.author)
+                    && config
+                        .agent(&review.reviewer)
+                        .is_none_or(|agent| agent.review)
+            })
+            .count();
+        let mut missing_checks = Vec::new();
+        let mut failed_checks = Vec::new();
+        for required in &config.merge.required_checks {
+            let matching: Vec<&Check> = self
+                .checks
+                .iter()
+                .filter(|check| {
+                    check.name == *required
+                        && config.agent(&check.actor).is_some_and(|agent| {
+                            agent.checks.iter().any(|name| name == required)
+                        })
+                })
+                .collect();
+            if matching.is_empty()
+                || matching
+                    .iter()
+                    .all(|check| check.result != CheckResult::Passed)
+            {
+                missing_checks.push(required.clone());
+            }
+            if matching
+                .iter()
+                .any(|check| check.result == CheckResult::Failed)
+            {
+                failed_checks.push(required.clone());
+            }
+        }
+        let mut blockers = self.issues.clone();
+        for review in &self.reviews {
+            if review.decision == ReviewDecision::ChangesRequested
+                && config
+                    .agent(&review.reviewer)
+                    .is_none_or(|agent| agent.review)
+            {
+                blockers.push(format!("changes requested by {}", review.reviewer));
+            }
+        }
+        if approvals < config.merge.min_approvals {
+            blockers.push(format!(
+                "{} more approval(s) required",
+                config.merge.min_approvals - approvals
+            ));
+        }
+        if !missing_checks.is_empty() {
+            blockers.push(format!("missing checks: {}", missing_checks.join(", ")));
+        }
+        if !failed_checks.is_empty() {
+            blockers.push(format!("failed checks: {}", failed_checks.join(", ")));
+        }
+        let ready = blockers.is_empty()
+            && !matches!(
+                self.state,
+                ProposalState::Merged
+                    | ProposalState::Rejected
+                    | ProposalState::Superseded
+                    | ProposalState::Expired
+            );
+        Readiness {
+            ready,
+            approvals,
+            approvals_required: config.merge.min_approvals,
+            missing_checks,
+            failed_checks,
+            blockers,
+        }
     }
 }
 
@@ -287,12 +469,23 @@ pub fn review_ref(
     ))
 }
 
-pub fn check_ref(id: &str, runner: &str, result: CheckResult) -> Result<String, ParseError> {
+pub fn check_ref(
+    id: &str,
+    actor: &str,
+    name: &str,
+    result: CheckResult,
+) -> Result<String, ParseError> {
     validate_id(id)?;
-    validate_actor(runner)?;
+    validate_actor(actor)?;
+    validate_actor(name)?;
     Ok(format!(
-        "{PROPOSAL_PREFIX}{id}/checks/{runner}/{result}"
+        "{PROPOSAL_PREFIX}{id}/checks/{actor}/{name}/{result}"
     ))
+}
+
+pub fn result_ref(id: &str) -> Result<String, ParseError> {
+    validate_id(id)?;
+    Ok(format!("{PROPOSAL_PREFIX}{id}/result"))
 }
 
 #[derive(Default)]
@@ -303,6 +496,7 @@ struct Builder {
     states: Vec<(ProposalState, String)>,
     reviews: Vec<(Review, String)>,
     checks: Vec<(Check, String)>,
+    results: Vec<String>,
 }
 
 /// Project proposal summaries from `(full ref name, oid)` pairs.
@@ -352,12 +546,14 @@ pub fn project<'a>(refs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<Pr
                 }
             }
         } else if let Some(check) = tail.strip_prefix("checks/") {
-            if let Some((runner, result)) = check.split_once('/') {
-                if validate_actor(runner).is_ok() {
+            let parts: Vec<&str> = check.split('/').collect();
+            if let [actor, name, result] = parts.as_slice() {
+                if validate_actor(actor).is_ok() && validate_actor(name).is_ok() {
                     if let Ok(result) = result.parse() {
                         b.checks.push((
                             Check {
-                                runner: runner.to_string(),
+                                actor: (*actor).to_string(),
+                                name: (*name).to_string(),
                                 result,
                             },
                             oid.to_string(),
@@ -365,6 +561,8 @@ pub fn project<'a>(refs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<Pr
                     }
                 }
             }
+        } else if tail == "result" {
+            b.results.push(oid.to_string());
         }
     }
 
@@ -387,8 +585,9 @@ pub fn project<'a>(refs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<Pr
                     .then_with(|| a.0.decision.as_str().cmp(b.0.decision.as_str()))
             });
             b.checks.sort_by(|a, b| {
-                a.0.runner
-                    .cmp(&b.0.runner)
+                a.0.actor
+                    .cmp(&b.0.actor)
+                    .then_with(|| a.0.name.cmp(&b.0.name))
                     .then_with(|| a.0.result.as_str().cmp(b.0.result.as_str()))
             });
 
@@ -411,9 +610,17 @@ pub fn project<'a>(refs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<Pr
                 }
             }
             for pair in b.checks.windows(2) {
-                if pair[0].0.runner == pair[1].0.runner {
-                    issues.push(format!("multiple current checks from {}", pair[0].0.runner));
+                if pair[0].0.actor == pair[1].0.actor
+                    && pair[0].0.name == pair[1].0.name
+                {
+                    issues.push(format!(
+                        "multiple current {} checks from {}",
+                        pair[0].0.name, pair[0].0.actor
+                    ));
                 }
+            }
+            if b.results.len() > 1 {
+                issues.push("multiple merge result refs".to_string());
             }
 
             let target = b
@@ -433,6 +640,9 @@ pub fn project<'a>(refs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<Pr
                 .unwrap_or_default();
             let reviews = b.reviews.into_iter().map(|(review, _)| review).collect();
             let checks = b.checks.into_iter().map(|(check, _)| check).collect();
+            let merge_oid = (state == ProposalState::Merged)
+                .then(|| b.results.into_iter().next())
+                .flatten();
 
             Some(Proposal {
                 id,
@@ -442,6 +652,7 @@ pub fn project<'a>(refs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<Pr
                 state,
                 reviews,
                 checks,
+                merge_oid,
                 healthy: issues.is_empty(),
                 issues,
             })
@@ -465,8 +676,8 @@ mod tests {
             ("refs/soulgit/proposals/p-1/author/alice@example.com", B),
             ("refs/soulgit/proposals/p-1/state/reviewing", B),
             ("refs/soulgit/proposals/p-1/reviews/bob@example.com/approved", B),
-            ("refs/soulgit/proposals/p-1/checks/tests/passed", B),
-            ("refs/soulgit/proposals/p-1/checks/security/failed", A),
+            ("refs/soulgit/proposals/p-1/checks/ci@example.com/tests/passed", B),
+            ("refs/soulgit/proposals/p-1/checks/ci@example.com/security/failed", A),
         ];
         let proposals = project(refs);
         assert_eq!(proposals.len(), 1);
@@ -479,6 +690,7 @@ mod tests {
         assert_eq!(p.approvals(), 1);
         assert_eq!(p.checks_passed(), 1);
         assert!(p.healthy);
+        assert!(p.readiness(&SoulGitConfig::default()).ready);
     }
 
     #[test]
@@ -501,5 +713,70 @@ mod tests {
         assert!(target_ref("p", "bad..branch").is_err());
         assert!(author_ref("p", "agent+review@example.com").is_ok());
         assert!(author_ref("p", "team/agent").is_err());
+    }
+
+    #[test]
+    fn readiness_requires_configured_checks_and_non_author_approval() {
+        let p = Proposal {
+            id: "p".into(),
+            head: A.into(),
+            target: "main".into(),
+            author: "alice@example.com".into(),
+            state: ProposalState::Reviewing,
+            reviews: vec![
+                Review {
+                    reviewer: "alice@example.com".into(),
+                    decision: ReviewDecision::Approved,
+                },
+                Review {
+                    reviewer: "bob@example.com".into(),
+                    decision: ReviewDecision::Approved,
+                },
+            ],
+            checks: vec![Check {
+                actor: "ci@example.com".into(),
+                name: "tests".into(),
+                result: CheckResult::Passed,
+            }],
+            merge_oid: None,
+            healthy: true,
+            issues: Vec::new(),
+        };
+        let cfg = SoulGitConfig {
+            merge: MergeRules {
+                min_approvals: 1,
+                required_checks: vec!["tests".into()],
+                ..Default::default()
+            },
+            agents: vec![AgentGrant {
+                principal: "ci@example.com".into(),
+                checks: vec!["tests".into()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let readiness = p.readiness(&cfg);
+        assert!(readiness.ready);
+        assert_eq!(readiness.approvals, 1);
+    }
+
+    #[test]
+    fn parses_versioned_rules_and_scoped_agent_grants() {
+        let cfg = SoulGitConfig::parse(
+            r#"
+                version = 1
+                [merge]
+                min_approvals = 2
+                required_checks = ["tests"]
+                strategy = "squash"
+                [[agents]]
+                principal = "svc-ci"
+                checks = ["tests"]
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.merge.min_approvals, 2);
+        assert_eq!(cfg.merge.strategy, MergeStrategy::Squash);
+        assert_eq!(cfg.agent("svc-ci").unwrap().checks, ["tests".to_string()]);
     }
 }

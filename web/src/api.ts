@@ -17,6 +17,9 @@ export type {
   ProposalState,
   ProposalReview,
   ProposalCheck,
+  ProposalDetail,
+  ProposalReadiness,
+  ProposalMergeRules,
   Resolved,
   Commit,
   CommitTrailer,
@@ -95,6 +98,9 @@ export const api = {
   refs: (repo: string) => authRedirect(client.repo(repo).refs()),
   proposals: (repo: string, q: ProposalListQuery = {}) => authRedirect(client.repo(repo).proposals(q)),
   proposal: (repo: string, id: string) => authRedirect(client.repo(repo).proposal(id)),
+  reviewProposal: (repo: string, id: string, decision: "approved" | "changes-requested") =>
+    authRedirect(client.repo(repo).reviewProposal(id, decision)),
+  mergeProposal: (repo: string, id: string) => authRedirect(client.repo(repo).mergeProposal(id)),
   refList: (repo: string, kind: "branches" | "tags", q: { q?: string; prefix?: string; after?: string; n?: number } = {}) =>
     authRedirect(kind === "branches" ? client.repo(repo).branches(q) : client.repo(repo).tags(q)),
   resolve: (repo: string, rest: string) => authRedirect(client.repo(repo).resolve(rest)),

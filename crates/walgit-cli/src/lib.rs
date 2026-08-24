@@ -259,10 +259,14 @@ enum ProposalAction {
     /// Publish a revision-bound agent/CI result (`pending`, `passed`, `failed`, `skipped`).
     Check {
         id: String,
-        runner: String,
+        /// Stable check name, for example `tests` or `security`.
+        name: String,
         result: String,
         #[arg(long, default_value = "origin")]
         remote: String,
+        /// Agent identity. Default: `git config user.email`.
+        #[arg(long)]
+        actor: Option<String>,
     },
     /// Change the proposal workflow state.
     State {
@@ -275,6 +279,33 @@ enum ProposalAction {
     List {
         #[arg(long, default_value = "origin")]
         remote: String,
+    },
+    /// Evaluate a proposal against `.soulgit.toml` on its target branch.
+    Ready {
+        id: String,
+        #[arg(long, default_value = "origin")]
+        remote: String,
+    },
+    /// Merge a ready proposal and mark it merged in one atomic push.
+    Merge {
+        id: String,
+        #[arg(long, default_value = "origin")]
+        remote: String,
+    },
+    /// Add proposal refs to this remote's fetch configuration and fetch them now.
+    Subscribe {
+        #[arg(long, default_value = "origin")]
+        remote: String,
+    },
+    /// Continuously fetch subscribed proposal refs and print changes.
+    Watch {
+        #[arg(long, default_value = "origin")]
+        remote: String,
+        #[arg(long, default_value_t = 15)]
+        interval: u64,
+        /// Fetch once and exit (useful for hooks and agents).
+        #[arg(long)]
+        once: bool,
     },
 }
 

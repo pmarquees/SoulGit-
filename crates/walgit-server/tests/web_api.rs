@@ -60,6 +60,20 @@ async fn json(server: &Server, path: &str) -> anyhow::Result<Value> {
     Ok(serde_json::from_str(&text)?)
 }
 
+async fn post_json(
+    server: &Server,
+    path: &str,
+    body: Value,
+) -> anyhow::Result<(reqwest::StatusCode, String)> {
+    let resp = reqwest::Client::new()
+        .post(format!("{}{path}", server.base_url))
+        .json(&body)
+        .send()
+        .await?;
+    let status = resp.status();
+    Ok((status, resp.text().await?))
+}
+
 /// Build a source repo with the shapes the UI cares about and push it.
 fn fixture(server: &Server) -> anyhow::Result<std::path::PathBuf> {
     let dir = tempfile::tempdir()?.keep(); // TODO(hermetic): keep TempDir in fixture
@@ -111,7 +125,7 @@ fn fixture(server: &Server) -> anyhow::Result<std::path::PathBuf> {
         "refs/soulgit/proposals/feature-x/author/alice@example.com",
         "refs/soulgit/proposals/feature-x/state/reviewing",
         "refs/soulgit/proposals/feature-x/reviews/bob@example.com/approved",
-        "refs/soulgit/proposals/feature-x/checks/tests/passed",
+        "refs/soulgit/proposals/feature-x/checks/ci@example.com/tests/passed",
     ] {
         git_in(&dir, &["update-ref", proposal_ref, "feature/x"])?;
     }
@@ -120,7 +134,7 @@ fn fixture(server: &Server) -> anyhow::Result<std::path::PathBuf> {
         &dir,
         &[
             "update-ref",
-            "refs/soulgit/proposals/feature-x/checks/security/failed",
+            "refs/soulgit/proposals/feature-x/checks/ci@example.com/security/failed",
             "HEAD~1",
         ],
     )?;
@@ -203,9 +217,33 @@ async fn conformance(
     assert_eq!(proposal["reviews"].as_array().unwrap().len(), 1);
     assert_eq!(proposal["checks"].as_array().unwrap().len(), 1);
     assert_eq!(proposal["checks"][0]["result"], "passed");
+    assert_eq!(proposal["checks"][0]["name"], "tests");
+    assert_eq!(proposal["checks"][0]["actor"], "ci@example.com");
     assert_eq!(proposal["healthy"], true);
     let detail = json(server, "/o/r/api/proposals/feature-x").await?;
-    assert_eq!(detail, *proposal);
+    assert_eq!(detail["proposal"], *proposal);
+    assert_eq!(detail["title"], "feature work");
+    assert_eq!(detail["readiness"]["ready"], true);
+    let (status, body) = post_json(
+        server,
+        "/o/r/api/proposals/feature-x/reviews",
+        serde_json::json!({"decision": "changes-requested"}),
+    )
+    .await?;
+    assert_eq!(status, 200, "{body}");
+    let detail = json(server, "/o/r/api/proposals/feature-x").await?;
+    assert_eq!(detail["readiness"]["ready"], false);
+    assert!(detail["readiness"]["blockers"][0]
+        .as_str()
+        .unwrap()
+        .contains("changes requested"));
+    let (status, _) = post_json(
+        server,
+        "/o/r/api/proposals/feature-x/checks",
+        serde_json::json!({"name": "tests", "result": "passed"}),
+    )
+    .await?;
+    assert_eq!(status, 403, "unconfigured principals cannot publish checks");
     let filtered = json(server, "/o/r/api/proposals?state=reviewing&q=ALICE").await?;
     assert_eq!(filtered["proposals"].as_array().unwrap().len(), 1);
     let filtered = json(server, "/o/r/api/proposals?state=approved").await?;

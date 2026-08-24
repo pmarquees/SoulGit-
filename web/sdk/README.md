@@ -51,8 +51,11 @@ r.create() / r.delete()                      → write permission
 r.refs()                                     → { head: {name, sha} | null }
 r.branches({ prefix, q, after, n })          → { refs: [{name, sha}], more }      (one page; tags likewise)
 r.tags({ … })
-r.proposals({ state, q, after, n })          → { proposals: [{id, head, target, author, state, reviews, checks, healthy, issues}], more }
-r.proposal(id)                              → one proposal projected at its current head
+r.proposals({ state, q, after, n })          → { proposals: [{id, head, target, author, state, reviews, checks, merge_oid, healthy, issues}], more }
+r.proposal(id)                              → { proposal, readiness, merge, title, description }
+r.reviewProposal(id, "approved")            → publish this authenticated principal's exact-head review
+r.checkProposal(id, "tests", "passed")      → publish a configured agent's named exact-head check
+r.mergeProposal(id)                         → atomically fast-forward target and record the merge result
 r.refStream("branches", q, onRef)            → streams matches as found; resolves { more }
 r.resolve("feature/x/src/main.go")           → { ref, sha, path, kind }           (server splits ref/path, API.md §3)
 r.tree(rev, path?)                           → { ref, sha, path, entries, commit?, readme? }

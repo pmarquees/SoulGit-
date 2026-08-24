@@ -1,9 +1,67 @@
-# SoulGit — a proposal inbox for distributed Git
+# SoulGit — share the work, choose the truth
 
-SoulGit is a fork of [Tobi's Walgit](https://github.com/tobi/walgit) that adds a reviewable proposal network on
-top of Walgit's authoritative object-store repository. A push can become an inbox proposal instead of changing
-the protected branch; humans and agents attach reviews and checks to its exact commit, and an authorized merge
-broker alone advances the canonical branch. See [`docs/SOULGIT.md`](docs/SOULGIT.md).
+```text
+                 .-●                 ●-.
+             .--'   \               /   '--.
+        ●---'        \-----●-------/        '---●
+             '--.     \   / \   /     .--'
+                 '-----●-'   '-●-----'
+
+            ███████╗ ██████╗ ██╗   ██╗██╗      ██████╗ ██╗████████╗
+            ██╔════╝██╔═══██╗██║   ██║██║     ██╔════╝ ██║╚══██╔══╝
+            ███████╗██║   ██║██║   ██║██║     ██║  ███╗██║   ██║
+            ╚════██║██║   ██║██║   ██║██║     ██║   ██║██║   ██║
+            ███████║╚██████╔╝╚██████╔╝███████╗╚██████╔╝██║   ██║
+            ╚══════╝ ╚═════╝  ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝   ╚═╝
+```
+
+SoulGit is a fork of [Tobi's Walgit](https://github.com/tobi/walgit), inspired by the social shape of Soulseek:
+people share directly, interesting work finds its way to you, and participation does not require surrendering
+control to one collaboration platform. It is not an implementation of Soulseek's protocol or branding; the logo
+above is an original peer-network mark.
+
+Git already distributes history. SoulGit distributes **collaboration**. A push becomes a proposal that can arrive
+in every subscriber's inbox automatically. Receiving it never changes a working tree and never means accepting
+it. Humans and agents review the same immutable revision, publish scoped attestations, and decide when it is ready.
+Only an authorized merge advances the canonical branch in the authoritative S3/GCS repository.
+
+> **Share broadly. Merge deliberately. Keep truth recoverable.**
+
+That separation is the ethos:
+
+- **Circulation is generous; authority is narrow.** Proposals spread automatically. Canonical refs move only by
+  explicit policy and an atomic compare-and-swap.
+- **An inbox, not an interruption.** Every pull-like arrival is a reviewable proposal. You choose what enters your
+  branch and when.
+- **Agents are participants, not hidden administrators.** A repository can allow an agent to run named checks,
+  review, or merge—independently. Every result is bound to the exact commit it examined.
+- **The network can disappear without taking the truth with it.** The object-store WAL is authoritative; nodes are
+  disposable caches, and future peer delivery remains a hash-verified acceleration layer.
+- **No second database decides what happened.** Proposal state is Git refs, commit messages carry the title and
+  description, and every accepted change remains replayable from the WAL.
+
+See [`docs/SOULGIT.md`](docs/SOULGIT.md) for the protocol and operating model.
+
+## The SoulGit flow
+
+```sh
+# Publish HEAD as a proposal. It does not move main.
+walgit proposal create --target main
+
+# Make proposal refs arrive with ordinary fetches, or watch continuously.
+walgit proposal subscribe
+walgit proposal watch --interval 15
+
+# Review the exact proposed revision and inspect repository readiness rules.
+walgit proposal review <id> approved
+walgit proposal ready <id>
+
+# Atomically advance main and record the accepted result when ready.
+walgit proposal merge <id>
+```
+
+Readiness and agent grants are versioned with the canonical branch in [`.soulgit.toml`](.soulgit.toml). Push
+authorization remains in `policy.json`, deliberately separate from readiness.
 
 The underlying Walgit host has **no database, no leader and no local state that matters**. You run a
 single binary, point it at an S3 or GCS bucket, and you have: smart HTTP (v0/v2) fetch and push, `bundle-uri`

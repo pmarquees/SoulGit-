@@ -49,7 +49,8 @@ export interface ProposalReview {
   decision: "approved" | "changes-requested";
 }
 export interface ProposalCheck {
-  runner: string;
+  actor: string;
+  name: string;
   result: "pending" | "passed" | "failed" | "skipped";
 }
 export interface Proposal {
@@ -60,6 +61,7 @@ export interface Proposal {
   state: ProposalState;
   reviews: ProposalReview[];
   checks: ProposalCheck[];
+  merge_oid: string | null;
   healthy: boolean;
   issues: string[];
 }
@@ -72,6 +74,27 @@ export interface ProposalListQuery {
   state?: ProposalState;
   after?: string;
   n?: number;
+}
+export interface ProposalReadiness {
+  ready: boolean;
+  approvals: number;
+  approvals_required: number;
+  missing_checks: string[];
+  failed_checks: string[];
+  blockers: string[];
+}
+export interface ProposalMergeRules {
+  min_approvals: number;
+  required_checks: string[];
+  allow_author_approval: boolean;
+  strategy: "fast-forward" | "merge-commit" | "squash";
+}
+export interface ProposalDetail {
+  proposal: Proposal;
+  readiness: ProposalReadiness;
+  merge: ProposalMergeRules;
+  title: string;
+  description: string;
 }
 export interface RefListQuery {
   /** Path prefix under the namespace (`refs/heads/<prefix>/`). */
@@ -656,7 +679,26 @@ export class RepoClient {
   }
   /** One SoulGit proposal, including reviews and checks bound to its current head. */
   proposal(id: string, opts?: CallOptions) {
-    return this.client.json<Proposal>(`${this.p}/proposals/${enc(id)}`, opts, JSON_ONLY);
+    return this.client.json<ProposalDetail>(`${this.p}/proposals/${enc(id)}`, opts, JSON_ONLY);
+  }
+  reviewProposal(id: string, decision: "approved" | "changes-requested", opts?: CallOptions) {
+    return this.client.json<{ ok: true; seq: number }>(`${this.p}/proposals/${enc(id)}/reviews`, opts, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision }),
+    });
+  }
+  checkProposal(id: string, name: string, result: ProposalCheck["result"], opts?: CallOptions) {
+    return this.client.json<{ ok: true; seq: number }>(`${this.p}/proposals/${enc(id)}/checks`, opts, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, result }),
+    });
+  }
+  mergeProposal(id: string, opts?: CallOptions) {
+    return this.client.json<{ ok: true; seq: number; merge_oid: string; target: string }>(`${this.p}/proposals/${enc(id)}/merge`, opts, {
+      method: "POST",
+    });
   }
   /** Streaming ref page: `onRef` per match as the server finds it; resolves `{more}`. */
   async refStream(kind: "branches" | "tags", q: RefListQuery, onRef: (r: RefInfo) => void, opts?: CallOptions): Promise<{ more: boolean }> {

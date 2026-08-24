@@ -19,6 +19,7 @@ const CommitPage = lazy(() => track(import("./pages/CommitPage")).then((m) => ({
 const OverviewPage = lazy(() => track(import("./pages/OverviewPage")).then((m) => ({ default: m.OverviewPage })));
 const SettingsPage = lazy(() => track(import("./pages/SettingsPage")).then((m) => ({ default: m.SettingsPage })));
 const ProposalInboxPage = lazy(() => track(import("./pages/ProposalInboxPage")).then((m) => ({ default: m.ProposalInboxPage })));
+const ProposalPage = lazy(() => track(import("./pages/ProposalPage")).then((m) => ({ default: m.ProposalPage })));
 const ApiPage = lazy(() => track(import("./pages/ApiPage")).then((m) => ({ default: m.ApiPage })));
 
 createRoot(document.getElementById("root")!).render(
@@ -36,6 +37,7 @@ createRoot(document.getElementById("root")!).render(
             <Route path="wal" element={<OverviewPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="proposals" element={<ProposalInboxPage />} />
+            <Route path="proposals/:proposalId" element={<ProposalPage />} />
             <Route path="commits" element={<CommitsPage />} />
             <Route path="commits/*" element={<CommitsPage />} />
             <Route path="commit/:sha" element={<CommitPage />} />
