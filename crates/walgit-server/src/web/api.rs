@@ -187,6 +187,20 @@ struct RefListQuery {
     n: Option<usize>,
 }
 
+#[derive(serde::Deserialize, Default)]
+struct ProposalListQuery {
+    q: Option<String>,
+    state: Option<String>,
+    after: Option<String>,
+    n: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct ProposalPage {
+    proposals: Vec<soulgit_proposals::Proposal>,
+    more: bool,
+}
+
 pub fn router(state: Arc<AppState>) -> Router {
     // D26/D27: repo-scoped endpoints live under the repository's own prefix,
     // `/{owner}/{repo}/api/…` (bearer/session lane) and `/{owner}/{repo}/api-browser/…`
@@ -201,6 +215,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         r = r
             .route(&format!("{base}/refs"), get(refs))
             .route(&format!("{base}/refs/{{kind}}"), get(ref_list))
+            .route(&format!("{base}/proposals"), get(proposals))
+            .route(&format!("{base}/proposals/{{id}}"), get(proposal))
             .route(&format!("{base}/resolve"), get(resolve_root))
             .route(&format!("{base}/resolve/"), get(resolve_root))
             .route(&format!("{base}/resolve/{{*rest}}"), get(resolve))
@@ -591,6 +607,95 @@ async fn ref_list(
         return Ok(resp);
     }
     Ok(json_swr(&RefPage { refs, more }, None).into_response(&headers))
+}
+
+// ---- proposals ---------------------------------------------------------------
+
+async fn proposals(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, repo_name)): Path<(String, String)>,
+    Query(q): Query<ProposalListQuery>,
+) -> Result<Response, ApiError> {
+    run(
+        &st,
+        &headers,
+        &owner,
+        &repo_name,
+        Need::Refs,
+        None,
+        |r| async move {
+            let n = q.n.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE);
+            let state = q
+                .state
+                .as_deref()
+                .map(str::parse::<soulgit_proposals::ProposalState>)
+                .transpose()
+                .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            let needle = q
+                .q
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(str::to_ascii_lowercase);
+            let after = q.after.as_deref().unwrap_or("");
+            let start = r
+                .index
+                .proposals
+                .partition_point(|proposal| proposal.id.as_str() <= after);
+            let mut page = Vec::with_capacity(n.min(256));
+            let mut more = false;
+            for proposal in &r.index.proposals[start..] {
+                if state.is_some_and(|expected| proposal.state != expected) {
+                    continue;
+                }
+                if let Some(needle) = &needle {
+                    let matches = proposal.id.to_ascii_lowercase().contains(needle)
+                        || proposal.author.to_ascii_lowercase().contains(needle)
+                        || proposal.target.to_ascii_lowercase().contains(needle);
+                    if !matches {
+                        continue;
+                    }
+                }
+                if page.len() == n {
+                    more = true;
+                    break;
+                }
+                page.push(proposal.clone());
+            }
+            Ok(json_swr(
+                &ProposalPage {
+                    proposals: page,
+                    more,
+                },
+                Some(&etag_for(&r.version)),
+            ))
+        },
+    )
+    .await
+}
+
+async fn proposal(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, repo_name, id)): Path<(String, String, String)>,
+) -> Result<Response, ApiError> {
+    soulgit_proposals::validate_id(&id).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    run(
+        &st,
+        &headers,
+        &owner,
+        &repo_name,
+        Need::Refs,
+        None,
+        |r| async move {
+            let proposal = r
+                .index
+                .proposal(&id)
+                .ok_or_else(|| not_found(format!("proposal {id}")))?;
+            Ok(json_swr(proposal, Some(&etag_for(&r.version))))
+        },
+    )
+    .await
 }
 
 // ---- resolve -----------------------------------------------------------------

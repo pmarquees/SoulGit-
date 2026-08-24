@@ -43,6 +43,36 @@ export interface RefPage {
   refs: RefInfo[];
   more: boolean;
 }
+export type ProposalState = "open" | "reviewing" | "changes-requested" | "approved" | "merging" | "merged" | "rejected" | "superseded" | "expired";
+export interface ProposalReview {
+  reviewer: string;
+  decision: "approved" | "changes-requested";
+}
+export interface ProposalCheck {
+  runner: string;
+  result: "pending" | "passed" | "failed" | "skipped";
+}
+export interface Proposal {
+  id: string;
+  head: string;
+  target: string;
+  author: string;
+  state: ProposalState;
+  reviews: ProposalReview[];
+  checks: ProposalCheck[];
+  healthy: boolean;
+  issues: string[];
+}
+export interface ProposalPage {
+  proposals: Proposal[];
+  more: boolean;
+}
+export interface ProposalListQuery {
+  q?: string;
+  state?: ProposalState;
+  after?: string;
+  n?: number;
+}
 export interface RefListQuery {
   /** Path prefix under the namespace (`refs/heads/<prefix>/`). */
   prefix?: string;
@@ -619,6 +649,14 @@ export class RepoClient {
   /** One name-sorted page of tags (sha = peeled commit). */
   tags(q: RefListQuery = {}, opts?: CallOptions) {
     return this.client.json<RefPage>(`${this.p}/refs/tags${qs(q)}`, opts, JSON_ONLY);
+  }
+  /** SoulGit proposal inbox projected from `refs/soulgit/proposals/*`. */
+  proposals(q: ProposalListQuery = {}, opts?: CallOptions) {
+    return this.client.json<ProposalPage>(`${this.p}/proposals${qs(q)}`, opts, JSON_ONLY);
+  }
+  /** One SoulGit proposal, including reviews and checks bound to its current head. */
+  proposal(id: string, opts?: CallOptions) {
+    return this.client.json<Proposal>(`${this.p}/proposals/${enc(id)}`, opts, JSON_ONLY);
   }
   /** Streaming ref page: `onRef` per match as the server finds it; resolves `{more}`. */
   async refStream(kind: "branches" | "tags", q: RefListQuery, onRef: (r: RefInfo) => void, opts?: CallOptions): Promise<{ more: boolean }> {

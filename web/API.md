@@ -331,6 +331,27 @@ One **name-sorted page** of one namespace, for the branch/tag picker.
   ref-state version; the picker's typical traffic is the same handful of
   queries repeated.
 
+### `GET /{owner}/{repo}/api/proposals?state=&q=&after=&n=`
+
+SoulGit's name-sorted proposal inbox, projected from `refs/soulgit/proposals/*` in the cached ref index:
+
+```json
+{
+  "proposals": [{
+    "id": "01J6Q9X4K7Y7D4GX8QPMMX9QX0",
+    "head": "807d45a6…", "target": "main", "author": "alice@example.com", "state": "reviewing",
+    "reviews": [{"reviewer": "bob@example.com", "decision": "approved"}],
+    "checks": [{"runner": "tests", "result": "passed"}], "healthy": true, "issues": []
+  }],
+  "more": false
+}
+```
+
+`state` is an exact proposal-state filter; `q` is a case-insensitive id/author/target substring; `after` is an
+id cursor; `n` defaults to 100 and is capped at 1000. `GET …/proposals/{id}` returns one projection or `404`.
+Only metadata/review/check refs pointing at the proposal's current head are included. Cache: SWR + manifest-version
+ETag. SDK: `repo.proposals(query)` and `repo.proposal(id)`.
+
 ### `GET /{owner}/{repo}/api/resolve/{rest...}`
 
 ```json

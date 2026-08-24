@@ -103,6 +103,27 @@ fn fixture(server: &Server) -> anyhow::Result<std::path::PathBuf> {
     for _ in 0..40 {
         git_in(&dir, &["commit", "-q", "--allow-empty", "-m", "filler"])?;
     }
+    // SoulGit proposals are ordinary refs. Every metadata/ref attestation
+    // points at the exact proposal head it describes.
+    for proposal_ref in [
+        "refs/soulgit/proposals/feature-x/head",
+        "refs/soulgit/proposals/feature-x/target/main",
+        "refs/soulgit/proposals/feature-x/author/alice@example.com",
+        "refs/soulgit/proposals/feature-x/state/reviewing",
+        "refs/soulgit/proposals/feature-x/reviews/bob@example.com/approved",
+        "refs/soulgit/proposals/feature-x/checks/tests/passed",
+    ] {
+        git_in(&dir, &["update-ref", proposal_ref, "feature/x"])?;
+    }
+    // This result is for an old revision and must not count for feature-x.
+    git_in(
+        &dir,
+        &[
+            "update-ref",
+            "refs/soulgit/proposals/feature-x/checks/security/failed",
+            "HEAD~1",
+        ],
+    )?;
     git_in(
         &dir,
         &["push", "-q", "--mirror", &server.repo_url("o", "r")],
@@ -168,6 +189,29 @@ async fn conformance(
     assert_eq!(st, 200);
     assert!(hdr(&h, "content-type").starts_with("text/event-stream"));
     assert!(body.contains("event: ref\n") && body.contains("event: done\ndata: {\"more\":false}"));
+
+    // proposals: refs-only projection, exact-revision reviews/checks, paging
+    let p = json(server, "/o/r/api/proposals").await?;
+    assert_eq!(p["more"], false);
+    assert_eq!(p["proposals"].as_array().unwrap().len(), 1);
+    let proposal = &p["proposals"][0];
+    assert_eq!(proposal["id"], "feature-x");
+    assert_eq!(proposal["head"], feature);
+    assert_eq!(proposal["target"], "main");
+    assert_eq!(proposal["author"], "alice@example.com");
+    assert_eq!(proposal["state"], "reviewing");
+    assert_eq!(proposal["reviews"].as_array().unwrap().len(), 1);
+    assert_eq!(proposal["checks"].as_array().unwrap().len(), 1);
+    assert_eq!(proposal["checks"][0]["result"], "passed");
+    assert_eq!(proposal["healthy"], true);
+    let detail = json(server, "/o/r/api/proposals/feature-x").await?;
+    assert_eq!(detail, *proposal);
+    let filtered = json(server, "/o/r/api/proposals?state=reviewing&q=ALICE").await?;
+    assert_eq!(filtered["proposals"].as_array().unwrap().len(), 1);
+    let filtered = json(server, "/o/r/api/proposals?state=approved").await?;
+    assert!(filtered["proposals"].as_array().unwrap().is_empty());
+    assert_eq!(get(server, "/o/r/api/proposals/nope").await?.0, 404);
+    assert_eq!(get(server, "/o/r/api/proposals?state=nope").await?.0, 400);
 
     // resolve
     let (st, text, h) = get_h(server, "/o/r/api/resolve/feature/x/dir", &[]).await?;

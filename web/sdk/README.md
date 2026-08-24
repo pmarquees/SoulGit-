@@ -51,6 +51,8 @@ r.create() / r.delete()                      → write permission
 r.refs()                                     → { head: {name, sha} | null }
 r.branches({ prefix, q, after, n })          → { refs: [{name, sha}], more }      (one page; tags likewise)
 r.tags({ … })
+r.proposals({ state, q, after, n })          → { proposals: [{id, head, target, author, state, reviews, checks, healthy, issues}], more }
+r.proposal(id)                              → one proposal projected at its current head
 r.refStream("branches", q, onRef)            → streams matches as found; resolves { more }
 r.resolve("feature/x/src/main.go")           → { ref, sha, path, kind }           (server splits ref/path, API.md §3)
 r.tree(rev, path?)                           → { ref, sha, path, entries, commit?, readme? }

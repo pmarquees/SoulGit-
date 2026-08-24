@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+soulgit-proposals.workspace = true
 humantime.workspace = true
 walgit-proto.workspace = true
 walgit-store.workspace = true

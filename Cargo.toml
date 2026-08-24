@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/soulgit-proposals",
     "crates/walgit-proto",
     "crates/walgit-store",
     "crates/walgit-config",
@@ -18,6 +19,7 @@ license = "MIT"
 rust-version = "1.90"
 
 [workspace.dependencies]
+soulgit-proposals = { path = "crates/soulgit-proposals" }
 walgit-proto = { path = "crates/walgit-proto" }
 walgit-store = { path = "crates/walgit-store" }
 walgit-config = { path = "crates/walgit-config" }

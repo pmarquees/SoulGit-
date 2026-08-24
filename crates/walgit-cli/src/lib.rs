@@ -19,6 +19,7 @@ mod compact;
 mod import;
 mod import_direct;
 mod mirror;
+mod proposal;
 mod repo;
 mod serve;
 mod wal_cmd;
@@ -68,6 +69,11 @@ struct ServerCli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// SoulGit proposal inbox commands (operate on the current Git checkout).
+    Proposal {
+        #[command(subcommand)]
+        action: ProposalAction,
+    },
     /// Run the HTTP server (smart HTTP v0/v2, LFS, bundles, optional compaction/bundle loops).
     Serve,
     /// Trigger compaction (geometric repack) for one repo or all.
@@ -209,6 +215,66 @@ enum Command {
     Config {
         #[command(subcommand)]
         action: ConfigAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProposalAction {
+    /// Publish the current commit as a new proposal.
+    Create {
+        /// Stable proposal id. Default: `p-<random>`.
+        #[arg(long)]
+        id: Option<String>,
+        /// Git remote receiving the proposal refs.
+        #[arg(long, default_value = "origin")]
+        remote: String,
+        /// Branch the proposal wants to enter.
+        #[arg(long, default_value = "main")]
+        target: String,
+        /// Identity recorded on the proposal. Default: `git config user.email`.
+        #[arg(long)]
+        author: Option<String>,
+        /// Commit-ish to propose.
+        #[arg(long, default_value = "HEAD")]
+        head: String,
+    },
+    /// Move a proposal to a new revision; prior reviews/checks become stale.
+    Update {
+        id: String,
+        #[arg(long, default_value = "origin")]
+        remote: String,
+        #[arg(long, default_value = "HEAD")]
+        head: String,
+    },
+    /// Publish a revision-bound review (`approved` or `changes-requested`).
+    Review {
+        id: String,
+        decision: String,
+        #[arg(long, default_value = "origin")]
+        remote: String,
+        /// Reviewer identity. Default: `git config user.email`.
+        #[arg(long)]
+        reviewer: Option<String>,
+    },
+    /// Publish a revision-bound agent/CI result (`pending`, `passed`, `failed`, `skipped`).
+    Check {
+        id: String,
+        runner: String,
+        result: String,
+        #[arg(long, default_value = "origin")]
+        remote: String,
+    },
+    /// Change the proposal workflow state.
+    State {
+        id: String,
+        state: String,
+        #[arg(long, default_value = "origin")]
+        remote: String,
+    },
+    /// List proposals advertised by a remote.
+    List {
+        #[arg(long, default_value = "origin")]
+        remote: String,
     },
 }
 
@@ -470,6 +536,12 @@ pub fn main_server() -> Result<()> {
 }
 
 fn run(config: &std::path::Path, command: Command) -> Result<()> {
+    // Proposal commands are developer-side Git operations and deliberately do
+    // not require a server's walgit.toml.
+    let command = match command {
+        Command::Proposal { action } => return proposal::run(action),
+        other => other,
+    };
     // Install the rustls crypto provider before any TLS code runs (GCS gRPC, reqwest).
     // Required for rustls 0.23+ — multiple providers in the dep tree; select one.
     rustls::crypto::aws_lc_rs::default_provider()
@@ -489,6 +561,7 @@ fn run(config: &std::path::Path, command: Command) -> Result<()> {
 async fn dispatch(command: Command, cfg: Config) -> Result<()> {
     let cfg = std::sync::Arc::new(cfg);
     match command {
+        Command::Proposal { .. } => unreachable!(),
         Command::Config { action } => config_cmd::run(action, &cfg).await,
         Command::Synth {
             out,

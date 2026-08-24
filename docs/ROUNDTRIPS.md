@@ -40,8 +40,10 @@ right shape. This document is the thinking tool; apply it to every protocol chan
 | Operation | Depth | Requests | Where |
 |---|---|---|---|
 | Any read (`info/refs`, ls-refs, web refs/resolve) | 1 cond GET (or 0 within `freshness_ttl`) | 1 | `sync.rs::freshness_check` |
+| SoulGit proposal inbox/detail | Same refs-level sync as any web ref read; projection is built once per manifest version from the in-memory ref snapshot | **0 extra** | `cache.rs::RefIndex`, `web/api.rs` |
 | Cold Refs sync | 1 manifest GET → 1 round (checkpoint refs ∥ log tail segments) | no checkpoint: 1 + tail (2 with one segment); checkpoint: 2 + tail | `registry.rs::open`, `sync.rs` |
 | Push request / publish (`process_batch`) | 1 freshness GET → pack PUT ∥ idx PUT ∥ log PUT (1 round) → manifest CAS (1 round) | request: 5; already-synced publish: 4 | `publish.rs` |
+| SoulGit proposal publish/review/check | Ordinary atomic Git ref push; identical to push above, with no side object or registry write | **0 extra** | `receive_pack.rs`, `publish.rs` |
 | Compaction publish | same shape as push | — | `publish.rs::publish_compact_impl` |
 | Checkpoint | 1 cond GET (freshness) → refs PUT ∥ checkpoint PUT → manifest CAS | 3 rounds, 4 requests (was 6/6 until 2026-08-22: a bundle-list GET before the checkpoint PUT and a log GET for provenance times sat in the chain; times now come from the writer's own applied state, `bundle_key` is no longer looked up) | `checkpoint.rs` |
 | Settings publish (D24) | refs sync (conditional GET) → log slot PUT → manifest CAS; readers pay nothing extra (settings ride inline on the manifest) | 3 rounds; read: 0 | `publish.rs::publish_settings_impl` |

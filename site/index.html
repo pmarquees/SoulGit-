@@ -3,20 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>walgit — a git server that is one binary in front of a bucket</title>
-<meta name="description" content="walgit hosts git repositories with no database, no leader and no local state that matters. One binary, one S3 or GCS bucket: smart HTTP, bundle-uri clones, LFS, a web UI and an API — and repositories larger than the machine.">
+<title>SoulGit — distributed proposals, one authoritative Git</title>
+<meta name="description" content="SoulGit adds a proposal inbox for humans and agents to Walgit's authoritative S3/GCS Git host.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="#">walgit</a>
+  <a class="brand" href="#">SoulGit</a>
   <nav>
     <a href="#why">Why</a>
     <a href="#how">How</a>
     <a href="#run">Run it</a>
     <a href="#auth">Auth</a>
     <a href="#edge">Edge</a>
-    <a href="https://github.com/tobi/walgit">GitHub ↗</a>
+    <a href="https://github.com/pmarquees/SoulGit-">GitHub ↗</a>
   </nav>
 </header>
 
@@ -24,11 +24,11 @@
 <section class="hero">
   <canvas id="dag" aria-hidden="true"></canvas>
   <div class="hero-body">
-    <h1>A git server that is one binary<br>in front of a bucket.</h1>
+    <h1>Everyone can propose.<br>Only policy makes it canonical.</h1>
     <p class="lede">
-      walgit hosts git repositories with <strong>no database, no leader and no local state that matters</strong>.
-      Point it at S3 or GCS and you get smart HTTP fetch and push, clones served as static files, Git LFS,
-      a web UI, a JSON API — and repositories <em>larger than the machine that serves them</em>.
+      SoulGit adds a <strong>reviewable proposal inbox for humans and agents</strong> to Walgit's object-store Git
+      architecture. Proposals, reviews, and checks are Git refs; S3 or GCS remains the authority, and an authorized
+      merge broker alone advances protected branches.
     </p>
 <pre><code><span class="c"># 1. a config</span>
 cat &gt; walgit.toml &lt;&lt;'EOF'
@@ -54,7 +54,7 @@ WALGIT_TOKEN_ME=$(openssl rand -hex 24) walgit serve --config walgit.toml
 <span class="c"># 3. use it — a push to a new name creates the repository</span>
 git push https://git.example.com/acme/app.git main</code></pre>
     <p class="actions">
-      <a class="btn primary" href="https://github.com/tobi/walgit">Source on GitHub</a>
+      <a class="btn primary" href="https://github.com/pmarquees/SoulGit-">Source on GitHub</a>
       <a class="btn" href="#run">Run it in five minutes</a>
     </p>
   </div>
@@ -80,8 +80,9 @@ git push https://git.example.com/acme/app.git main</code></pre>
       never seen a repository reads the log and has it.</p>
     </div>
     <div>
-      <h3>What walgit adds</h3>
-      <p>The same design on machines <em>smaller than the repository</em>: a remote reader that serves refs, the
+      <h3>What SoulGit adds</h3>
+      <p>A proposal inbox projected entirely from refs, with human reviews and agent checks bound to an exact
+      commit. Underneath, Walgit still runs on machines <em>smaller than the repository</em>: a remote reader serves refs, the
       UI and the API from pack indexes plus HTTP range reads; a history pack that keeps commits and trees local
       while blobs stay in the bucket; and bundle-uri as the clone transport, so a 30 GB fresh clone touches the
       server for a few kilobytes.</p>
@@ -103,6 +104,7 @@ git push https://git.example.com/acme/app.git main</code></pre>
     <div><dt>A read</dt><dd>one conditional GET of the manifest — 304 means serve from the local copy, 200 means apply the new entries. There is no "eventually".</dd></div>
     <div><dt>A clone</dt><dd>git's <code>bundle-uri</code>: the newest weekly full plus the chain of dailies and hourlies above it, straight from the bucket or a CDN; upload-pack sends only the remainder.</dd></div>
     <div><dt>A fetch</dt><dd>the catch-up list has no fulls: a days-stale client downloads exactly the slots it missed.</dd></div>
+    <div><dt>A proposal</dt><dd>one atomic push creates its head, target, author, and state refs. Updating the head makes every old review and agent check stale automatically.</dd></div>
     <div><dt>Maintenance</dt><dd>checkpoints, bundles, compaction, base rebuilds, fsck and repair are one loop: compute the desired state from (config, WAL), do one bounded unit, under a lease. Self-healing by construction.</dd></div>
     <div><dt>Nothing waits silently</dt><dd>slow work is a task with a progress stream, narrated to git on sideband 2 and to the browser as SSE.</dd></div>
   </dl>
@@ -179,8 +181,9 @@ walgit → nginx   200 + X-Accel-Redirect: /_store/
 <section class="band">
   <h2>Read more</h2>
   <ul class="links">
-    <li><a href="https://github.com/tobi/walgit/blob/main/README.md">README</a> — the introduction, running it, the invariants.</li>
-    <li><a href="https://github.com/tobi/walgit/blob/main/AGENTS.md">AGENTS.md</a> — the architecture and every design decision with its reasoning.</li>
+    <li><a href="https://github.com/pmarquees/SoulGit-/blob/main/README.md">README</a> — the introduction, running it, the invariants.</li>
+    <li><a href="https://github.com/pmarquees/SoulGit-/blob/main/docs/SOULGIT.md">SoulGit protocol</a> — proposal refs, agent hooks, and the authority boundary.</li>
+    <li><a href="https://github.com/pmarquees/SoulGit-/blob/main/AGENTS.md">AGENTS.md</a> — the architecture and every design decision with its reasoning.</li>
     <li><a href="https://github.com/tobi/walgit/blob/main/docs/BUNDLE_URI_DESIGN.md">Bundle design</a> — slots, chains, the two lists, the numbers.</li>
     <li><a href="https://github.com/tobi/walgit/blob/main/docs/announcing-walgit.md">The announcement post</a>.</li>
     <li><a href="https://cursor.com/blog/git-at-any-scale">Git at any scale</a> — the design walgit descends from.</li>
@@ -188,7 +191,7 @@ walgit → nginx   200 + X-Accel-Redirect: /_store/
 </section>
 </main>
 
-<footer>walgit is MIT licensed. Built on the ideas in Cursor's Continuity; not affiliated.</footer>
+<footer>SoulGit is an MIT-licensed fork of Tobi's Walgit, built on the ideas in Cursor's Continuity.</footer>
 <script src="dag.js"></script>
 </body>
 </html>

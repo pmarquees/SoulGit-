@@ -52,6 +52,9 @@ Only `ref` events exist. Not events: push denials and auth failures (metrics + l
   `ref_update`; consumers must not care.
 - One event per ref update in the transaction; symbolic (HEAD) retargets and COMPACT / CHECKPOINT / SETTINGS
   entries emit nothing.
+- SoulGit proposal refs are ordinary refs and therefore need no new event kind. Agent consumers filter
+  `ref_name` on `refs/soulgit/proposals/`, deduplicate normally, and bind work to the event's `new` OID. The
+  webhook is notification only: consumers fetch the immutable commit before publishing a check or review ref.
 
 **Dedup key (normative): `(repo, _walgit.seq, ref_name)`.** **Order: by `seq` per repo.** Nothing else is promised.
 

@@ -399,6 +399,33 @@ decision in §4 — or the PR is; never "fix later".
 
 Decision identifiers are stable; gaps in the numbering are intentional.
 
+### SoulGit fork decisions (2026-08-24)
+
+- **D42** **The bucket remains authoritative.** SoulGit adds discovery and review semantics without introducing
+  an authoritative peer, registry database, or coordinator. Any S3/GCS-backed Walgit node can reconstruct the
+  complete accepted state; peers may accelerate delivery but never decide truth.
+- **D43** **A proposal is a ref family.** `refs/soulgit/proposals/<id>/head` is the proposed commit; sibling
+  `target`, `author`, `state`, `reviews/<actor>/<decision>`, and `checks/<name>/<result>` refs project the inbox.
+  All proposal writes use ordinary atomic receive-pack updates and the existing manifest CAS.
+- **D44** **Attestations bind to the exact head OID.** A review/check is active only when its ref points to the
+  current proposal head. Updating a proposal makes old attestations stale without mutation or hidden state.
+- **D45** **Policy and readiness stay separate.** `policy.json` authorizes who may move a canonical ref. Review
+  counts, check requirements, and merge readiness belong to a merge broker; the broker remains subject to push
+  policy and cannot bypass the object-store commit point.
+- **D46** **Agents are ref-event consumers with scoped credentials.** The host does not execute proposal code.
+  Agents observe ordinary WAL-derived ref events, fetch an immutable revision, and may publish only their own
+  check/review namespace. Human review uses the same wire model.
+- **D47** **Push delivery is notification plus fetch.** A committed proposal ref event can wake subscribers,
+  which fetch missing objects normally. Delivery is at-least-once and idempotent; receipt is never acceptance.
+- **D48** **Peer transport is an optional cache.** A future peer layer may advertise and exchange immutable Git
+  objects, but every object is hash-verified and canonical refs still come from the bucket. Bucket fetch remains
+  the correctness fallback.
+- **D49** **Developer proposal commands do not require server config.** `walgit proposal create|update|review|
+  check|state|list` operate through the current Git remote and local Git identity, so contributors need no
+  `walgit.toml`. This is a narrow exception to D39's server/operator config rule.
+- **D50** **SoulGit is a deliberate product fork of Walgit.** Upstream history and invariants are retained;
+  fork-specific protocol and UI changes are documented in `docs/SOULGIT.md` and `UPSTREAM.md`.
+
 ---
 
 ## 5. Working rules

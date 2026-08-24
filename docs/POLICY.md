@@ -29,6 +29,10 @@ Leave out anything receive-pack cannot enforce: required reviews, required CI,
 “must go through a PR.” Those are merge-queue rules. Putting them in the push
 file just lies.
 
+In SoulGit, this boundary is intentional: proposal reviews/checks are refs consumed by an authorized merge
+broker. Policy protects `refs/heads/main` so only that broker (plus explicit break-glass identities) may move it;
+it does not attempt to recompute proposal readiness during receive-pack.
+
 Missing file / empty `rules` = allow-all (anyone with write may move any
 ref). That is the only implicit default.
 

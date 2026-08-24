@@ -58,14 +58,16 @@ export function RepoLayout() {
   const full = `${owner}/${repo}`;
   const { pathname } = useLocation();
   useEffect(() => {
-    document.title = `${full} · walgit`;
+    document.title = `${full} · SoulGit`;
     return () => {
-      document.title = "walgit";
+      document.title = "SoulGit";
     };
   }, [full]);
   const walActive = pathname.endsWith("/wal");
   const settingsActive = pathname.endsWith("/settings");
-  const codeActive = !walActive && !settingsActive && !/\/commits?(\/|$)/.test(pathname);
+  const proposalsActive = pathname.endsWith("/proposals");
+  const commitsActive = /\/commits?(\/|$)/.test(pathname);
+  const codeActive = !walActive && !settingsActive && !proposalsActive && !commitsActive;
   return (
     <>
       <div className="repo-head">
@@ -87,8 +89,11 @@ export function RepoLayout() {
           <NavLink to={`/${full}`} className={() => (codeActive ? "tab active" : "tab")} end>
             Code
           </NavLink>
-          <NavLink to={`/${full}/commits`} className={() => (codeActive || walActive || settingsActive ? "tab" : "tab active")}>
+          <NavLink to={`/${full}/commits`} className={() => (commitsActive ? "tab active" : "tab")}>
             Commits
+          </NavLink>
+          <NavLink to={`/${full}/proposals`} className={() => (proposalsActive ? "tab active" : "tab")}>
+            Inbox
           </NavLink>
           <NavLink to={`/${full}/wal`} className={() => (walActive ? "tab active" : "tab")}>
             WAL

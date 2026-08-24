@@ -1,4 +1,4 @@
-# GOAL — what walgit is for
+# GOAL — what SoulGit is for
 
 Context: for everyone (humans and agents) working on this repository. Read this before `AGENTS.md`. This page
 is **what we want**; `AGENTS.md` is **how we build it**. When a choice is not obviously right, come back here
@@ -6,8 +6,8 @@ and ask: which option serves this goal better?
 
 ## The one sentence
 
-**A share-nothing git host, fast for monorepos, with an object store as the *only* source of truth — one binary
-anyone can run against a bucket, and predictable enough that tooling can build on it.**
+**An authoritative, share-nothing Git host with a proposal inbox: anyone may offer work, humans and agents may
+review it, and only explicit policy can advance canonical branches.**
 
 ## What that means, unpacked
 
@@ -26,18 +26,24 @@ anyone can run against a bucket, and predictable enough that tooling can build o
    in seconds, a developer's `git fetch` in the time it takes to read the output, fresh clones as static
    bundles (weekly full + daily/hourly chain) so bytes move bucket → laptop and never through a server.
    **Fast clone + fast catch-up through bundles is the north star** (`docs/BUNDLE_URI_DESIGN.md`).
-4. **All the features a git host needs, and only those**: smart HTTP v0/v2 (ls-refs, fetch with
+4. **Proposals are Git, not a second database.** Proposal heads, targets, state, reviews and checks are namespaced
+   refs committed through the same WAL and manifest CAS as every other ref. An update invalidates attestations
+   from the prior revision. The inbox is a projection that can always be rebuilt from canonical state.
+5. **Humans and agents share one review protocol.** An agent may observe proposal ref events and publish a scoped
+   check or review, but it never receives arbitrary code execution authority from the host. Only an authorized
+   merge broker may update protected canonical refs; repository policy remains the final enforcement boundary.
+6. **All the features the host needs**: smart HTTP v0/v2 (ls-refs, fetch with
    filter/shallow/deepen, receive-pack atomic/delete/tags/push-options/report-status-v2), bundle-uri, LFS,
    `<owner>/<repo>` namespaces, per-repo push policy and settings, ref events, a browsing web UI + one JSON API +
-   one SDK (`repos.js`), tasks/narration so nothing ever waits silently. Not in scope: code review, merge
-   queues, CI, issues — those live elsewhere and build on this.
-5. **Works great for developers and their laptops.** One auth story (browser sign-in through your identity
+   one SDK (`repos.js`), tasks/narration so nothing ever waits silently. Issue tracking and general CI execution
+   remain external; SoulGit stores their signed/scoped outcomes against proposal revisions.
+7. **Works great for developers and their laptops.** One auth story (browser sign-in through your identity
    provider, a token for git), one install script, `git` does the rest; errors tell you the fix; every long
    wait is narrated. The developer on a rebased branch must get *cheaper*, never slower.
-6. **Predictable for the systems that build on it**: stable, immutable, cacheable, CDN-able artefacts
+8. **Predictable for the systems that build on it**: stable, immutable, cacheable, CDN-able artefacts
    (bundles, packs, sha-addressed API answers); O(1) ref lookups; latency that does not depend on which
    instance you hit or how many refs exist; a provenance log you can rewind (`walgit wal materialize --at-seq`).
-7. **Use the tools; don't reinvent them.** Upstream `git` where it is right (repack, bitmaps, bundle create,
+9. **Use the tools; don't reinvent them.** Upstream `git` where it is right (repack, bitmaps, bundle create,
    upload-pack), `gix` where it is faster and measured, Rust + tokio + axum for the server, the object store
    as it is (range reads, compose / multipart copy, CAS), a plain nginx or CDN in front of static bytes,
    content addressing everywhere, the WAL's ergonomics (`walgit wal ls|show|materialize`) as a first-class

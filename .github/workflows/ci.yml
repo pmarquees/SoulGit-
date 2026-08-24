@@ -1,0 +1,37 @@
+name: SoulGit CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proposal-slice:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Test proposal model
+        run: cargo test -p soulgit-proposals
+      - name: Check server and CLI integration
+        run: cargo check -p walgit-server -p walgit-cli
+      - name: Build web app and SDK
+        working-directory: web
+        run: pnpm install --frozen-lockfile && pnpm run build

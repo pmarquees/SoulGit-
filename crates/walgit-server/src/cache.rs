@@ -232,6 +232,9 @@ pub struct RefIndex {
     pub branches: Vec<(String, String)>,
     /// Short tag names, byte-sorted, with the peeled commit sha.
     pub tags: Vec<(String, String)>,
+    /// SoulGit proposal summaries, byte-sorted by proposal id. Built once per
+    /// manifest version from refs only; inbox reads never materialise packs.
+    pub proposals: Vec<soulgit_proposals::Proposal>,
     /// HEAD symref target (full name) or "".
     pub head_target: String,
 }
@@ -256,10 +259,16 @@ impl RefIndex {
         }
         branches.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
         tags.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+        let proposals = soulgit_proposals::project(
+            snap.refs
+                .iter()
+                .map(|r| (r.name.as_str(), r.oid.as_str())),
+        );
         Self {
             by_name,
             branches,
             tags,
+            proposals,
             head_target: snap.head_target.clone(),
         }
     }
@@ -289,6 +298,14 @@ impl RefIndex {
                     peeled.as_str()
                 }
             })
+    }
+
+    /// Proposal by stable id. `proposals` is byte-sorted by the projector.
+    pub fn proposal(&self, id: &str) -> Option<&soulgit_proposals::Proposal> {
+        self.proposals
+            .binary_search_by(|proposal| proposal.id.as_str().cmp(id))
+            .ok()
+            .map(|index| &self.proposals[index])
     }
 }
 

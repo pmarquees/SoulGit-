@@ -1,6 +1,11 @@
-# walgit — a git server that is one binary in front of an object store
+# SoulGit — a proposal inbox for distributed Git
 
-walgit hosts git repositories with **no database, no leader and no local state that matters**. You run a
+SoulGit is a fork of [Tobi's Walgit](https://github.com/tobi/walgit) that adds a reviewable proposal network on
+top of Walgit's authoritative object-store repository. A push can become an inbox proposal instead of changing
+the protected branch; humans and agents attach reviews and checks to its exact commit, and an authorized merge
+broker alone advances the canonical branch. See [`docs/SOULGIT.md`](docs/SOULGIT.md).
+
+The underlying Walgit host has **no database, no leader and no local state that matters**. You run a
 single binary, point it at an S3 or GCS bucket, and you have: smart HTTP (v0/v2) fetch and push, `bundle-uri`
 clones served as static files, Git LFS, a browsing web UI, a JSON API with an SDK, per-repository push policy,
 webhooks — and a server that scales to repositories **larger than the machine it runs on**. Every machine that
@@ -73,7 +78,8 @@ server entirely (**bundle-uri**: fresh clones and catch-ups are static files the
 | **git** | smart HTTP v0/v2: `ls-refs` with prefixes, fetch with filter/shallow/deepen/sideband-all, receive-pack (atomic, deletes, tags, push options, report-status-v2), `<owner>/<repo>` namespaces, sha1 and sha256 repositories. Upstream `git` does upload-pack/repack/bundle; walgit does receive-pack, the WAL and the plumbing. |
 | **bundle-uri** | Bundles cut on calendar slots (weekly full, chained dailies, hourlies) as a pure function of the WAL: a fresh clone downloads the newest full plus the chain above it from the bucket and asks the server only for the remainder; a catch-up downloads exactly the slots it missed. Two lists per repo: `bundles/list` for clones, `bundles/catchup` for fetches. Blobless families for `--filter=blob:none`. |
 | **LFS** | Batch API + basic transfer, objects in the bucket, optional read-through from an upstream LFS server for imported repositories. |
-| **web UI + API** | A React UI (tree, blob, commits, diffs, the WAL's own health page) on a read-mostly JSON API under `/{owner}/{repo}/api/*`; sha-addressed answers are immutable and cached everywhere; long answers stream progress as SSE. `repos.js` is a dependency-free SDK for pages, agents and scripts. |
+| **proposal inbox** | Push proposals live under `refs/soulgit/proposals/*`; reviews and agent checks are exact-revision attestations. The web UI, JSON API, and `repos.js` project them into an inbox without another database. |
+| **web UI + API** | A React UI (proposal inbox, tree, blob, commits, diffs, the WAL's own health page) on a read-mostly JSON API under `/{owner}/{repo}/api/*`; sha-addressed answers are immutable and cached everywhere; long answers stream progress as SSE. `repos.js` is a dependency-free SDK for pages, agents and scripts. |
 | **policy** | Per-repository push rules (`policy.json`): protected refs, groups, fast-forward only, bypass lists. `docs/POLICY.md`. |
 | **settings** | Per-repository config (bundle schedules, compaction, upstream follow) published into the WAL with history. |
 | **events** | A small bridge tails the WAL and POSTs ref events to a webhook, exactly-once per (repo, seq, ref) with a durable cursor. `docs/EVENTS.md`. |

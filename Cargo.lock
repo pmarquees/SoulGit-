@@ -5781,6 +5781,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 
 [[package]]
+name = "soulgit-proposals"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "walgit-bundle"
 version = "0.1.0"
 dependencies = [
@@ -5827,12 +5835,14 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1 0.10.7",
+ "soulgit-proposals",
  "tempfile",
  "tokio",
  "tokio-util",
  "toml",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "walgit-bundle",
  "walgit-config",
  "walgit-git",
@@ -5949,6 +5959,7 @@ dependencies = [
  "serde_json",
  "sha1 0.10.7",
  "sha2 0.10.9",
+ "soulgit-proposals",
  "tempfile",
  "thiserror",
  "tokio",
