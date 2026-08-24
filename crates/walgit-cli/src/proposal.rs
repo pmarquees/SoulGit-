@@ -336,9 +336,7 @@ fn subscribe(remote: &str) -> Result<()> {
 }
 
 fn ensure_subscription(remote: &str) -> Result<()> {
-    let spec = format!(
-        "+{PROPOSAL_PREFIX}*:refs/remotes/{remote}/soulgit/proposals/*"
-    );
+    let spec = format!("+{PROPOSAL_PREFIX}*:refs/remotes/{remote}/soulgit/proposals/*");
     let key = format!("remote.{remote}.fetch");
     let existing = git_capture_optional(&["config", "--get-all", &key])?;
     if !existing.lines().any(|line| line == spec) {
